@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"fmt"
@@ -8,14 +8,51 @@ import (
 	"github.com/gocolly/colly"
 )
 
-func main() {
-	startURL := "https://www.youtube.com"
+func scrape() {
+	startURL := "https://example.com"
 
 	u, err := url.Parse(startURL)
 	if err != nil {
-		fmt.Println("Invalid start URL:", err)
+		fmt.Println("Invalid URL:", err)
 		return
 	}
+
+	host := u.Hostname()
+	wwwHost := "www." + strings.TrimPrefix(host, "www.")
+
+	c := colly.NewCollector(
+		colly.AllowedDomains(host, wwwHost),
+		colly.MaxDepth(2),
+	)
+
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
+		href := e.Attr("href")
+		hrefLower := strings.ToLower(href)
+
+		if strings.Contains(hrefLower, "login") || strings.Contains(hrefLower, "signin") {
+			link := e.Request.AbsoluteURL(href)
+			fmt.Println("Found login/signin page:", link)
+			monitorLoginForPolicy(link)
+		}
+	})
+
+	c.OnRequest(func(r *colly.Request) {
+		fmt.Println("Scanning homepage:", r.URL.String())
+	})
+
+	err = c.Visit(startURL)
+	if err != nil {
+		fmt.Println("Failed to visit homepage:", err)
+	}
+}
+
+func monitorLoginForPolicy(loginURL string) {
+	u, err := url.Parse(loginURL)
+	if err != nil {
+		fmt.Println("Invalid login page URL:", err)
+		return
+	}
+
 	host := u.Hostname()
 	wwwHost := "www." + strings.TrimPrefix(host, "www.")
 
@@ -25,43 +62,31 @@ func main() {
 
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		href := e.Attr("href")
-		lowerHref := strings.ToLower(href)
+		hrefLower := strings.ToLower(href)
 
-		if strings.Contains(lowerHref, "terms") || strings.Contains(lowerHref, "policy") || strings.Contains(lowerHref, "privacy") {
+		if strings.Contains(hrefLower, "terms") || strings.Contains(hrefLower, "policy") || strings.Contains(hrefLower, "privacy") {
 			link := e.Request.AbsoluteURL(href)
-			fmt.Println("Found link:", link)
+			fmt.Println("Found policy link on login page:", link)
 			fetchAndPrintPolicy(link)
 		}
 	})
 
-	c.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting:", r.URL.String())
-	})
-
-	err = c.Visit(startURL)
+	err = c.Visit(loginURL)
 	if err != nil {
-		fmt.Println("Failed to visit:", err)
+		fmt.Println("Failed to visit login page:", err)
 	}
 }
 
 func fetchAndPrintPolicy(link string) {
-	u, err := url.Parse(link)
-	if err != nil {
-		fmt.Println("Invalid policy link:", err)
-		return
-	}
+	c := colly.NewCollector()
 
-	policyCollector := colly.NewCollector(
-		colly.AllowedDomains(u.Hostname(), "www."+strings.TrimPrefix(u.Hostname(), "www.")),
-	)
-
-	policyCollector.OnHTML("body", func(e *colly.HTMLElement) {
+	c.OnHTML("body", func(e *colly.HTMLElement) {
 		fmt.Println("----- Start of Policy Content -----")
 		fmt.Println(strings.TrimSpace(e.Text))
 		fmt.Println("----- End of Policy Content -----")
 	})
 
-	err = policyCollector.Visit(link)
+	err := c.Visit(link)
 	if err != nil {
 		fmt.Println("Failed to visit policy page:", err)
 	}
