@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -154,7 +155,7 @@ func ScrapeFromStack(stack *Stack) {
 	}
 }
 
-// fetchAndStorePolicy scrapes a policy page and returns content
+// fetchAndStorePolicy scrapes a policy page and returns cleaned, relevant content
 func fetchAndStorePolicy(policyURL string) string {
 	u, err := url.Parse(policyURL)
 	if err != nil {
@@ -170,9 +171,72 @@ func fetchAndStorePolicy(policyURL string) string {
 		colly.MaxDepth(2),
 	)
 
-	var content string
-	c.OnHTML("body", func(e *colly.HTMLElement) {
-		content = strings.TrimSpace(e.Text)
+	var policyContent strings.Builder
+
+	// Target policy-related DOM elements
+	c.OnHTML("p, section, article, div:not([class*='nav'],[class*='footer'],[class*='menu'],[class*='banner'],[class*='signup'],[id*='nav'],[id*='footer'],[id*='menu'],[id*='banner'],[id*='signup'])", func(e *colly.HTMLElement) {
+		// Skip elements with unwanted attributes or text
+		class := strings.ToLower(e.Attr("class"))
+		id := strings.ToLower(e.Attr("id"))
+		text := strings.ToLower(e.Text)
+		if strings.Contains(class, "cookie-consent") || strings.Contains(id, "cookie-consent") ||
+			strings.Contains(text, "create an account") || strings.Contains(text, "sign up") ||
+			strings.Contains(text, "back to top") || strings.Contains(text, "equal opportunity") ||
+			strings.Contains(text, "cookie preferences") || strings.Contains(text, "socialitems") ||
+			strings.Contains(text, "facebook") || strings.Contains(text, "linkedin") ||
+			strings.Contains(text, "twitter") || strings.Contains(text, "instagram") ||
+			strings.Contains(text, "--rg-gradient") || strings.Contains(text, "data-eb-") ||
+			strings.Contains(text, "contact us") || strings.Contains(text, "support ticket") ||
+			strings.Contains(text, "accessibility") {
+			return
+		}
+
+		// Prioritize elements with policy-related keywords
+		policyKeywords := []string{
+			"personal information", "data collection", "third party", "third-party",
+			"privacy", "policy", "terms", "data", "cookies", "legal", "retention",
+			"security", "access", "children", "location of", "use personal",
+			"share personal", "data privacy", "information collected",
+		}
+		hasPolicyContent := false
+		for _, keyword := range policyKeywords {
+			if strings.Contains(text, keyword) {
+				hasPolicyContent = true
+				break
+			}
+		}
+
+		if hasPolicyContent {
+			// Clean the text
+			cleanedText := strings.TrimSpace(e.Text)
+			if cleanedText == "" {
+				return
+			}
+
+			// Remove excessive whitespace, special characters, and unwanted patterns
+			cleanedText = strings.ReplaceAll(cleanedText, "\n", " ")
+			cleanedText = strings.ReplaceAll(cleanedText, "\t", " ")
+			cleanedText = regexp.MustCompile(`\s+`).ReplaceAllString(cleanedText, " ")
+			cleanedText = regexp.MustCompile(`--rg-gradient[^}]*}`).ReplaceAllString(cleanedText, "")
+			cleanedText = regexp.MustCompile(`\[data-eb-[^\]]*\]`).ReplaceAllString(cleanedText, "")
+			cleanedText = regexp.MustCompile(`\{[\s\S]*\}`).ReplaceAllString(cleanedText, "") // Remove JSON-like content
+
+			// Only include text with reasonable length
+			if len(cleanedText) > 20 {
+				policyContent.WriteString(cleanedText)
+				policyContent.WriteString("\n")
+			}
+		}
+	})
+
+	// Explicitly ignore non-content elements
+	c.OnHTML("script, style, noscript, iframe, footer, header, nav, [class*='cookie-consent'], [class*='signup'], [id*='cookie-consent'], [id*='signup']", func(e *colly.HTMLElement) {
+		// Ignore these elements
+	})
+
+	// Log the scraping process
+	c.OnRequest(func(r *colly.Request) {
+		fmt.Printf("Scraping policy page: %s\n", r.URL.String())
 	})
 
 	err = c.Visit(policyURL)
@@ -180,6 +244,13 @@ func fetchAndStorePolicy(policyURL string) string {
 		fmt.Println("Failed to visit policy page:", err)
 		return ""
 	}
+
+	content := policyContent.String()
+	if content == "" {
+		fmt.Println("No relevant policy content found for:", policyURL)
+		return ""
+	}
+
 	return content
 }
 
