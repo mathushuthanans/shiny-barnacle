@@ -27,7 +27,6 @@ type Stack struct {
 	items []RequestData
 }
 
-var requestStack Stack
 var NonEmptyPolicyStack Stack
 var seenPolicies = make(map[string]bool)
 
@@ -79,15 +78,12 @@ func MainHandler(c *gin.Context) {
 		return
 	}
 
-	// Mark policies as seen and push to stack
-	seenPolicies[policyKey] = true
-	requestStack.Push(data)
-
-	// Push to nonEmptyPolicyStack if PolicyLinks is not empty
+	// Mark policies as seen and push to NonEmptyPolicyStack if PolicyLinks is not empty
 	if len(data.PolicyLinks) > 0 {
+		seenPolicies[policyKey] = true
 		NonEmptyPolicyStack.Push(data)
 
-		// Print nonEmptyPolicyStack contents before scraping
+		// Print NonEmptyPolicyStack contents before scraping
 		fmt.Println("\n=== Non-Empty Policy Stack (Before Scraping) ===")
 		for i, item := range NonEmptyPolicyStack.items {
 			fmt.Printf("Item %d:\n", i+1)
@@ -104,7 +100,7 @@ func MainHandler(c *gin.Context) {
 		// Scrape and update NonEmptyPolicyStack
 		ScrapeFromStack(&NonEmptyPolicyStack)
 
-		// Print updated nonEmptyPolicyStack contents after scraping
+		// Print updated NonEmptyPolicyStack contents after scraping
 		fmt.Println("\n=== Non-Empty Policy Stack (After Scraping) ===")
 		for i, item := range NonEmptyPolicyStack.items {
 			fmt.Printf("Item %d:\n", i+1)
@@ -119,25 +115,11 @@ func MainHandler(c *gin.Context) {
 		}
 	}
 
-	// Print current stack contents
-	fmt.Println("\n=== Current Stack ===")
-	for i, item := range requestStack.items {
-		fmt.Printf("Item %d:\n", i+1)
-		fmt.Printf("  URL: %s\n", item.URL)
-		fmt.Printf("  Has Login Form: %v\n", item.LoginDetected)
-		fmt.Printf("  Is Processed: %v\n", item.IsProcessed)
-		fmt.Printf("  Text Policy: %s\n", item.TextPolicy)
-		fmt.Println("  Policy Links:")
-		for _, link := range item.PolicyLinks {
-			fmt.Printf("    - %s\n", link)
-		}
-	}
-
 	// Send simple response
 	c.JSON(http.StatusOK, gin.H{"status": "received"})
 }
 
-// ScrapeFromStack processes nonEmptyPolicyStack and updates TextPolicy
+// ScrapeFromStack processes NonEmptyPolicyStack and updates TextPolicy
 func ScrapeFromStack(stack *Stack) {
 	// Pop items to process to avoid modifying stack during iteration
 	var itemsToProcess []RequestData
@@ -163,9 +145,8 @@ func ScrapeFromStack(stack *Stack) {
 				policyContent.WriteString("\n\n")
 			}
 		}
-		// Update TextPolicy with cumulative content
+		// Update TextPolicy with cumulative content and mark as processed
 		itemsToProcess[i].TextPolicy = policyContent.String()
-		// Mark item as processed
 		itemsToProcess[i].IsProcessed = true
 		// Push back to stack
 		stack.Push(itemsToProcess[i])
