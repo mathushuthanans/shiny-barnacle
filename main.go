@@ -27,6 +27,7 @@ type Stack struct {
 	items []RequestData
 }
 
+var requestStack Stack
 var NonEmptyPolicyStack Stack
 var seenPolicies = make(map[string]bool)
 
@@ -55,35 +56,29 @@ func getPolicyKey(policies []string) string {
 
 // MainHandler handles the /monitor endpoint
 func MainHandler(c *gin.Context) {
-	// Only accept POST requests
 	if c.Request.Method != "POST" {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
 		return
 	}
 
-	// Parse the JSON data
 	var data RequestData
 	if err := c.ShouldBindJSON(&data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Bad request"})
 		return
 	}
 
-	// Create a unique key based on policy links
 	policyKey := getPolicyKey(data.PolicyLinks)
-
-	// Check for duplicate policies
 	if seenPolicies[policyKey] {
 		fmt.Println("Status: Duplicate policies ignored")
 		c.JSON(http.StatusOK, gin.H{"status": "duplicate policies ignored"})
 		return
 	}
 
-	// Mark policies as seen and push to NonEmptyPolicyStack if PolicyLinks is not empty
-	if len(data.PolicyLinks) > 0 {
-		seenPolicies[policyKey] = true
-		NonEmptyPolicyStack.Push(data)
+	seenPolicies[policyKey] = true
+	requestStack.Push(data)
 
-		// Print NonEmptyPolicyStack contents before scraping
+	if len(data.PolicyLinks) > 0 {
+		NonEmptyPolicyStack.Push(data)
 		fmt.Println("\n=== Non-Empty Policy Stack (Before Scraping) ===")
 		for i, item := range NonEmptyPolicyStack.items {
 			fmt.Printf("Item %d:\n", i+1)
@@ -97,10 +92,8 @@ func MainHandler(c *gin.Context) {
 			}
 		}
 
-		// Scrape and update NonEmptyPolicyStack
 		ScrapeFromStack(&NonEmptyPolicyStack)
 
-		// Print updated NonEmptyPolicyStack contents after scraping
 		fmt.Println("\n=== Non-Empty Policy Stack (After Scraping) ===")
 		for i, item := range NonEmptyPolicyStack.items {
 			fmt.Printf("Item %d:\n", i+1)
@@ -115,13 +108,24 @@ func MainHandler(c *gin.Context) {
 		}
 	}
 
-	// Send simple response
+	fmt.Println("\n=== Current Stack ===")
+	for i, item := range requestStack.items {
+		fmt.Printf("Item %d:\n", i+1)
+		fmt.Printf("  URL: %s\n", item.URL)
+		fmt.Printf("  Has Login Form: %v\n", item.LoginDetected)
+		fmt.Printf("  Is Processed: %v\n", item.IsProcessed)
+		fmt.Printf("  Text Policy: %s\n", item.TextPolicy)
+		fmt.Println("  Policy Links:")
+		for _, link := range item.PolicyLinks {
+			fmt.Printf("    - %s\n", link)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"status": "received"})
 }
 
-// ScrapeFromStack processes NonEmptyPolicyStack and updates TextPolicy
+// ScrapeFromStack processes nonEmptyPolicyStack and updates TextPolicy
 func ScrapeFromStack(stack *Stack) {
-	// Pop items to process to avoid modifying stack during iteration
 	var itemsToProcess []RequestData
 	for len(stack.items) > 0 {
 		item, ok := stack.Pop()
@@ -133,7 +137,6 @@ func ScrapeFromStack(stack *Stack) {
 		}
 	}
 
-	// Process each unprocessed item
 	for i, item := range itemsToProcess {
 		fmt.Printf("Processing stack item: %s\n", item.URL)
 		var policyContent strings.Builder
@@ -145,10 +148,8 @@ func ScrapeFromStack(stack *Stack) {
 				policyContent.WriteString("\n\n")
 			}
 		}
-		// Update TextPolicy with cumulative content and mark as processed
 		itemsToProcess[i].TextPolicy = policyContent.String()
 		itemsToProcess[i].IsProcessed = true
-		// Push back to stack
 		stack.Push(itemsToProcess[i])
 	}
 }
@@ -268,15 +269,20 @@ func fetchAndPrintPolicy(link string) {
 }
 
 func main() {
-	// Initialize Gin router
 	r := gin.Default()
-
-	// Define API routes
 	r.POST("/monitor", MainHandler)
+	log.Println("Server starting...")
 
-	// Start server
-	log.Println("Server started at :8080")
-	if err := r.Run(":8080"); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// Try port 8080 first
+	port := ":8080"
+	err := r.Run(port)
+	if err != nil {
+		log.Printf("Port 8080 busy or failed: %v", err)
+		log.Println("Trying port 8081...")
+		port = ":8081"
+		err = r.Run(port)
+		if err != nil {
+			log.Fatalf("Failed to start server on 8081: %v", err)
+		}
 	}
 }
